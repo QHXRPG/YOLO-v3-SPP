@@ -1,6 +1,20 @@
 import torch.nn as nn
 import torch
+import torch.nn.init as init
 
+def init_weights(net):
+    for m in net.modules():
+        if isinstance(m, nn.Conv2d):
+            init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                init.constant_(m.bias, 0)
+        elif isinstance(m, nn.BatchNorm2d):
+            init.constant_(m.weight, 1)
+            init.constant_(m.bias, 0)
+        elif isinstance(m, nn.Linear):
+            init.normal_(m.weight, 0, 0.01)
+            if m.bias is not None:
+                init.constant_(m.bias, 0)
 #深度可分离卷积
 class DP_Conv(nn.Module):
     def __init__(self,indim:int, outdim:int, stride:int, ksize:int):
@@ -15,6 +29,7 @@ class DP_Conv(nn.Module):
         self.BN_1 = nn.BatchNorm2d(indim)
         self.relu=nn.ReLU()
         self.BN_2 = nn.BatchNorm2d(outdim)
+        init_weights(self)
     def forward(self,x:torch.Tensor)->torch.Tensor:
         x = self.depthwise_conv(x)
         x = self.BN_1(x)
@@ -30,6 +45,7 @@ class Convolutional(nn.Module):
         self.conv = DP_Conv(indim,outdim,stride,ksize)
         self.bn = nn.BatchNorm2d(outdim)
         self.lr = nn.LeakyReLU()
+        init_weights(self)
     def forward(self,x:torch.Tensor)->torch.Tensor:
         return self.lr(self.bn(self.conv(x)))
 
@@ -43,6 +59,7 @@ class SelfAttention(nn.Module):
         self.value_conv = nn.Conv2d(channels, channels, 1)
 
         self.gamma = nn.Parameter(torch.zeros(1))
+        init_weights(self)
 
     def forward(self, x):
         m_batchsize, C, height, width = x.size()
@@ -68,6 +85,7 @@ class Res_conv(nn.Module):
         self.conv1 = Convolutional(indim,int(indim/2),stride=1,ksize=1)
         self.attention = SelfAttention(int(indim/2))
         self.conv2 = Convolutional(int(indim/2),indim,stride=1,ksize=3)
+        init_weights(self)
 
     def forward(self,x:torch.Tensor) ->torch.Tensor:
         x = x+self.conv2(self.attention(self.conv1(x)))
@@ -94,6 +112,7 @@ class Darknet53(nn.Module):
         self.l10 = nn.Sequential()
         for i in range(8):
             self.l10.append(Res_conv(1024))
+        init_weights(self)
 
     def forward(self,x:torch.Tensor) ->(torch.Tensor,torch.Tensor,torch.Tensor):
         x1 = self.l6(self.l5(self.l4(self.l3(self.l2(self.l1(x))))))
@@ -109,6 +128,7 @@ class SPP(nn.Module):
         self.p1 = nn.MaxPool2d(5,1,2)
         self.p2 = nn.MaxPool2d(9,1,4)
         self.p3 = nn.MaxPool2d(13,1,6)
+        init_weights(self)
     def forward(self,x:torch.Tensor) -> torch.Tensor:
         x1 = torch.cat([x,self.p1(x)],axis=1)
         x2 = torch.cat([x1,self.p2(x)],axis=1)
@@ -129,6 +149,7 @@ class Convolutional_set(nn.Module):
         self.l3 = Convolutional(outdim * 2, outdim, 1, 1)
         self.l4 = Convolutional(outdim, outdim * 2, 1, 3)
         self.l5 = Convolutional(outdim * 2, outdim, 1, 1)
+        init_weights(self)
     def forward(self,x:torch.Tensor)->torch.Tensor:
         return self.l5(self.l4(self.l3(self.l2(self.l1(x)))))
 
@@ -156,6 +177,7 @@ class YOLO_3_SPP_Model(nn.Module):
         self.set2 = Convolutional_set(2)
         self.l3_output = nn.Sequential(Convolutional(128,256,1,3),
                                        nn.Conv2d(256,outdim,1,1))
+        init_weights(self)
     def forward(self,x:torch.Tensor)->(torch.Tensor,torch.Tensor,torch.Tensor):
         x1,x2,x3 = self.darknet(x)
         x1_1 = self.l1(self.spp(self.l(x3)))
