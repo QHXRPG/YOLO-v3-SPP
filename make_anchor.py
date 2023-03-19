@@ -42,7 +42,7 @@ class Anchor:
         self.anchor = None
         self.num_anchors = len(self.anchor_sizes) * len(self.anchor_ratios)
         self.isBuilt = False
-        self.anchor_box = np.array([])
+        self.anchor_box = []
     def built(self):
         # anchor box 的大小和比例
         # 划分网格并生成 anchor box
@@ -131,10 +131,11 @@ class Anchor:
         for i in range(gt_boxes.shape[0]):
             for j in range(num_anchors):
                 if max_idxs[i, j] > 0:
-                    self.anchor_box = np.append(self.anchor_box,anchors[max_idxs[i, j] // (6 * 9),
-                                                                        (max_idxs[i, j] % (6 * 9)) // 9,
-                                                                        max_idxs[i, j] % 9],
-                                                axis=0)
+                    self.anchor_box.append(list(anchors[max_idxs[i, j] // (6 * 9),
+                                                        (max_idxs[i, j] % (6 * 9)) // 9,
+                                                        max_idxs[i, j] % 9]))
+
+        self.anchor_box = np.array(self.anchor_box)
         return self.anchor_box
 
     def show_all_anchors(self):
@@ -150,6 +151,18 @@ class Anchor:
                     color = 'r' if k < 3 else 'g' if k < 6 else 'b'
                     rect = patches.Rectangle((x1, y1), x2 - x1, y2 - y1, linewidth=1, edgecolor=color, facecolor='none')
                     ax.add_patch(rect)
+        plt.show()
+    def show_all_choice_anchors(self):
+        fig, ax = plt.subplots(1)
+        ax.imshow(self.img)
+        for k in range(len(self.anchor_box)):
+            x1 = self.anchor_box[k][0]
+            y1 = self.anchor_box[k][1]
+            x2 = self.anchor_box[k][2]
+            y2 = self.anchor_box[k][3]
+            color = 'r' if k < 1 else 'g' if k < 2 else 'b'
+            rect = patches.Rectangle((x1, y1), x2 - x1, y2 - y1, linewidth=1, edgecolor=color, facecolor='none')
+            ax.add_patch(rect)
         plt.show()
 
 # 可视化 anchor box
@@ -168,4 +181,6 @@ if __name__ == "__main__":
     anchors = anchor.built()
     gt_boxes = gt_boxes[2].numpy()  #转numpy格式
     anchor_box = anchor.find_max_iou_anchors(gt_boxes,1)
+    anchor.show_all_choice_anchors()
+
 
