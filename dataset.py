@@ -20,7 +20,7 @@ def imshow(img_name:str,img:np.ndarray):
     cv2.waitKey(1)
 
 class Dataset(Data.Dataset):
-    def __init__(self,path, train_batch_size,val_batch_size,width,height):
+    def __init__(self,path, train_batch_size,val_batch_size,width,height,max_boxes=10):
         super(Dataset, self).__init__()
         self.path = path
         self.train_batch_size = train_batch_size
@@ -28,6 +28,7 @@ class Dataset(Data.Dataset):
         self.width = width
         self.height = height
         self.imgname = []
+        self.max_boxes = max_boxes
 
     def to_tensor(self,img):
         img = torch.tensor(img, dtype=torch.float32)
@@ -63,10 +64,10 @@ class Dataset(Data.Dataset):
         :return: (图片,类别,anchoe)
         """
         label = []
-        anchor = []
+        target_box = []
         images = torch.rand(0)
         label_all = []
-        anchor_all = []
+        target_box_all = []
         images_all = []
         self.k = []
         for root, dirs, files in os.walk(self.path):
@@ -88,29 +89,40 @@ class Dataset(Data.Dataset):
             with open(train_labels_path + image[:-5] + '.txt',"r") as file:
                 lines= file.readlines()
             label.append(int(lines[0][:-1]))
-            anchor.append(lines[1:])
+            target_box.append(lines[1:])
         label = np.array(label, dtype=np.int32)
         label = torch.tensor(label, dtype=torch.long)
-        for i in range(len(anchor)):
-            for j in range(len(anchor[i])):
-                anchor[i][j] = anchor[i][j].replace("\n","")
-                anchor[i][j] = list(map(int, anchor[i][j].split()))
-                anchor[i][j][0] = round(anchor[i][j][0] * self.width / self.k[i][1])
-                anchor[i][j][2] = round(anchor[i][j][2] * self.width / self.k[i][1])
-                anchor[i][j][1] = round(anchor[i][j][1] * self.height / self.k[i][0])
-                anchor[i][j][3] = round(anchor[i][j][3] * self.height / self.k[i][0])
-            anchor[i]=np.array(anchor[i], dtype=np.float32)
-            anchor[i]= torch.tensor(anchor[i], dtype=torch.float32)
-        for i in range(int(round(len(anchor) / self.train_batch_size, 0))):
-            if (i + 1) * self.train_batch_size < len(anchor):
-                anchor_all.append(anchor[i * self.train_batch_size: (i + 1) * self.train_batch_size])
+        for i in range(len(target_box)):
+            for j in range(len(target_box[i])):
+                target_box[i][j] = target_box[i][j].replace("\n", "")
+                target_box[i][j] = list(map(int, target_box[i][j].split()))
+                target_box[i][j][0] = round(target_box[i][j][0] * self.width / self.k[i][1])
+                target_box[i][j][2] = round(target_box[i][j][2] * self.width / self.k[i][1])
+                target_box[i][j][1] = round(target_box[i][j][1] * self.height / self.k[i][0])
+                target_box[i][j][3] = round(target_box[i][j][3] * self.height / self.k[i][0])
+            target_box[i]=np.array(target_box[i], dtype=np.float32)
+
+        gt_boxes_shape = (len(target_box), self.max_boxes, 4)
+        gt_boxes_n = np.zeros(gt_boxes_shape)
+        target_box = np.array(target_box)
+        # 遍历每个二维张量，将目标对象信息复制到全零数组中
+        for i in range(self.train_batch_size):
+            num_boxes = len(target_box[i])
+            if num_boxes > self.max_boxes:
+                num_boxes = self.max_boxes
+            gt_boxes_n[i, :num_boxes, :] = target_box[i][:self.max_boxes, :]
+        gt_boxes_n = torch.from_numpy(gt_boxes_n)
+
+        for i in range(int(round(len(gt_boxes_n) / self.train_batch_size, 0))):
+            if (i + 1) * self.train_batch_size < len(gt_boxes_n):
+                target_box_all.append(gt_boxes_n[i * self.train_batch_size: (i + 1) * self.train_batch_size])
                 images_all.append(images[i * self.train_batch_size: (i + 1) * self.train_batch_size])
                 label_all.append(label[i * self.train_batch_size: (i + 1) * self.train_batch_size])
             else:
-                anchor_all.append(anchor[i * self.train_batch_size:])
+                target_box_all.append(gt_boxes_n[i * self.train_batch_size:])
                 images_all.append(images[i * self.train_batch_size:])
                 label_all.append(label[i * self.train_batch_size:])
-        return zip(images_all,label_all,anchor_all)
+        return zip(images_all, label_all, target_box_all)
 
     def Loader_val(self):
         """
@@ -118,10 +130,10 @@ class Dataset(Data.Dataset):
         :return: (图片,类别,anchoe)
         """
         label = []
-        anchor = []
+        target_box = []
         images = torch.rand(0)
         label_all = []
-        anchor_all = []
+        target_box_all = []
         images_all = []
         self.k = []
         for root, dirs, files in os.walk(self.path):
@@ -140,31 +152,38 @@ class Dataset(Data.Dataset):
             with open(val_labels_path + image[:-5] + '.txt',"r") as file:
                 lines= file.readlines()
             label.append(int(lines[0][:-1]))
-            anchor.append(lines[1:])
+            target_box.append(lines[1:])
         label = np.array(label, dtype=np.int32)
         label = torch.tensor(label, dtype=torch.long)
-        for i in range(len(anchor)):
-            for j in range(len(anchor[i])):
-                anchor[i][j] = anchor[i][j].replace("\n","")
-                anchor[i][j] = list(map(int, anchor[i][j].split()))
-                anchor[i][j][0] = round(anchor[i][j][0] * self.width / self.k[i][1])
-                anchor[i][j][2] = round(anchor[i][j][2] * self.width / self.k[i][1])
-                anchor[i][j][1] = round(anchor[i][j][1] * self.height / self.k[i][0])
-                anchor[i][j][3] = round(anchor[i][j][3] * self.height / self.k[i][0])
-            anchor[i]=np.array(anchor[i], dtype=np.float32)
-            anchor[i]= torch.tensor(anchor[i], dtype=torch.float32)
-        for i in range(int(round(len(anchor) / self.val_batch_size, 0))):
-            if (i + 1) * self.val_batch_size < len(anchor):
-                anchor_all.append(anchor[i * self.val_batch_size: (i + 1) * self.val_batch_size])
-                images_all.append(images[i * self.val_batch_size: (i + 1) * self.val_batch_size])
-                label_all.append(label[i * self.val_batch_size: (i + 1) * self.val_batch_size])
+        for i in range(len(target_box)):
+            for j in range(len(target_box[i])):
+                target_box[i][j] = target_box[i][j].replace("\n", "")
+                target_box[i][j] = list(map(int, target_box[i][j].split()))
+                target_box[i][j][0] = round(target_box[i][j][0] * self.width / self.k[i][1])
+                target_box[i][j][2] = round(target_box[i][j][2] * self.width / self.k[i][1])
+                target_box[i][j][1] = round(target_box[i][j][1] * self.height / self.k[i][0])
+                target_box[i][j][3] = round(target_box[i][j][3] * self.height / self.k[i][0])
+            target_box[i]=np.array(target_box[i], dtype=np.float32)
+        gt_boxes_shape = (len(target_box), self.max_boxes, 4)
+        gt_boxes_n = np.zeros(gt_boxes_shape)
+        target_box = np.array(target_box)
+        # 遍历每个二维张量，将目标对象信息复制到全零数组中
+        for i in range(self.train_batch_size):
+            num_boxes = len(target_box[i])
+            if num_boxes > self.max_boxes:
+                num_boxes = self.max_boxes
+            gt_boxes_n[i, :num_boxes, :] = target_box[i][:self.max_boxes, :]
+        gt_boxes_n = torch.from_numpy(gt_boxes_n)
+        for i in range(int(round(len(gt_boxes_n) / self.train_batch_size, 0))):
+            if (i + 1) * self.train_batch_size < len(gt_boxes_n):
+                target_box_all.append(gt_boxes_n[i * self.train_batch_size: (i + 1) * self.train_batch_size])
+                images_all.append(images[i * self.train_batch_size: (i + 1) * self.train_batch_size])
+                label_all.append(label[i * self.train_batch_size: (i + 1) * self.train_batch_size])
             else:
-                anchor_all.append(anchor[i * self.val_batch_size:])
-                images_all.append(images[i * self.val_batch_size:])
-                label_all.append(label[i * self.val_batch_size:])
-        label_all = np.array(label_all, dtype=np.int)
-        label_all = torch.tensor(label_all, dtype=torch.long)
-        return zip(images_all,label_all,anchor_all)
+                target_box_all.append(gt_boxes_n[i * self.train_batch_size:])
+                images_all.append(images[i * self.train_batch_size:])
+                label_all.append(label[i * self.train_batch_size:])
+        return zip(images_all, label_all, target_box_all)
 
 def make_Standard_data():
     """
@@ -190,4 +209,8 @@ def make_Standard_data():
 
 
 if __name__ == "__main__":
-    make_Standard_data()
+    data = Dataset("/Users/qiuhaoxuan/PycharmProjects/yolov3_spp/yolo-v3-spp/my_yolo_dataset", 64, 20, 224,
+                   224)
+    data_loader = data.Loader_train()
+    for i, (img, labels, gt_boxes) in enumerate(data_loader):
+        break

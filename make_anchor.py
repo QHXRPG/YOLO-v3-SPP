@@ -42,7 +42,11 @@ class Anchor:
         self.anchor = None
         self.num_anchors = len(self.anchor_sizes) * len(self.anchor_ratios)
         self.isBuilt = False
-        self.anchor_box = []
+        self.anchor_box = None
+        self.max_ious = None
+        self.max_idxs = None
+        self.mask = None
+        self.anchor_list = None
     def built(self):
         # anchor box 的大小和比例
         # 划分网格并生成 anchor box
@@ -84,13 +88,14 @@ class Anchor:
 
         Args:
         anchors: ndarray, shape为 (h, w, num_anchors, 4)，表示所有anchor box的坐标
-        gt_boxes: ndarray, shape为 (n, 4)，表示所有ground truth box的坐标
+        gt_boxes: ndarray, shape为 (batch_size, max_gt_boxes_per_image, 4)，表示所有ground truth box的坐标
         n: int，表示每个ground truth box匹配的最大anchor数量
 
         Returns:
-        max_ious: ndarray, shape为 (n, num_anchors)，表示每个 ground truth box 和每个 anchor box 的最大IOU值
-        max_idxs: ndarray, shape为 (n, num_anchors)，表示每个 ground truth box 和每个 anchor box 的最大IOU值对应的 anchor box 的索引
+        max_ious: ndarray, shape为 (batch_size, max_gt_boxes_per_image, num_anchors)，表示每个 ground truth box 和每个 anchor box 的最大IOU值
+        max_idxs: ndarray, shape为 (batch_size, max_gt_boxes_per_image, num_anchors)，表示每个 ground truth box 和每个 anchor box 的最大IOU值对应的 anchor box 的索引
         """
+        self.mask = np.zeros((gt_boxes.shape[0], gt_boxes.shape[1], self.num_anchors))
         sizes = self.anchor_sizes
         ratios = self.anchor_ratios
         anchors = self.anchors
@@ -100,43 +105,60 @@ class Anchor:
         w_i = w // 6
         num_anchors = len(sizes) * len(ratios)
         # 找到每个 ground truth box 中心点所在的网格
-        gt_ctr_x = (gt_boxes[:, 0] + gt_boxes[:, 2]) / 2
-        gt_ctr_y = (gt_boxes[:, 1] + gt_boxes[:, 3]) / 2
+        gt_ctr_x = (gt_boxes[:, :, 0] + gt_boxes[:, :, 2]) / 2
+        gt_ctr_y = (gt_boxes[:, :, 1] + gt_boxes[:, :, 3]) / 2
         gt_grid_x = np.floor(gt_ctr_x / w_i).astype(int)
         gt_grid_y = np.floor(gt_ctr_y / h_i).astype(int)
 
         # 找到每个 ground truth box 对应的 IOU 最大的 n 个 anchor
-        max_ious = np.zeros((gt_boxes.shape[0], num_anchors))
-        max_idxs = np.zeros((gt_boxes.shape[0], num_anchors), dtype=np.int32)
+        max_ious = np.zeros((gt_boxes.shape[0], gt_boxes.shape[1], num_anchors))
+        max_idxs = np.zeros((gt_boxes.shape[0], gt_boxes.shape[1], num_anchors), dtype=np.int32)
+        anchor_list = np.zeros((gt_boxes.shape[0], gt_boxes.shape[1], 4))
         for i in range(gt_boxes.shape[0]):
-            # 只在对应网格内遍历 anchor box
-            j, k = gt_grid_y[i], gt_grid_x[i]
-            ious = np.zeros(num_anchors)
-            for l in range(num_anchors):
-                anchor_box = anchors[j, k, l]
-                # 计算 anchor box 和 ground truth box 的 IOU
-                xx1 = np.maximum(anchor_box[0], gt_boxes[i, 0])
-                yy1 = np.maximum(anchor_box[1], gt_boxes[i, 1])
-                xx2 = np.minimum(anchor_box[2], gt_boxes[i, 2])
-                yy2 = np.minimum(anchor_box[3], gt_boxes[i, 3])
-                inter_area = np.maximum(xx2 - xx1, 0) * np.maximum(yy2 - yy1, 0)
-                anchor_box_area = (anchor_box[2] - anchor_box[0]) * (anchor_box[3] - anchor_box[1])
-                gt_box_area = (gt_boxes[i, 2] - gt_boxes[i, 0]) * (gt_boxes[i, 3] - gt_boxes[i, 1])
-                iou = inter_area / (anchor_box_area + gt_box_area - inter_area)
-                ious[l] = iou
-            # 找到 IOU 最大的 n 个 anchor
-            idxs = np.argsort(-ious)[:n]
-            max_ious[i, idxs] = ious[idxs]
-            max_idxs[i, idxs] = j * 6 * 9 + k * 9 + idxs
-        for i in range(gt_boxes.shape[0]):
-            for j in range(num_anchors):
-                if max_idxs[i, j] > 0:
-                    self.anchor_box.append(list(anchors[max_idxs[i, j] // (6 * 9),
-                                                        (max_idxs[i, j] % (6 * 9)) // 9,
-                                                        max_idxs[i, j] % 9]))
+            for j in range(gt_boxes.shape[1]):
+                # 只在对应网格内遍历 anchor box
+                k = gt_grid_y[i, j]
+                l = gt_grid_x[i, j]
+                ious = np.zeros(num_anchors)
+                for m in range(num_anchors):
+                    anchor_box = anchors[k, l, m]
+                    # 计算 anchor box 和 ground truth box 的 IOU
+                    xx1 = np.maximum(anchor_box[0], gt_boxes[i, j, 0])
+                    yy1 = np.maximum(anchor_box[1], gt_boxes[i, j, 1])
+                    xx2 = np.minimum(anchor_box[2], gt_boxes[i, j, 2])
+                    yy2 = np.minimum(anchor_box[3], gt_boxes[i, j, 3])
+                    inter_area = np.maximum(xx2 - xx1, 0) *np.maximum(yy2 - yy1, 0)
+                    anchor_box_area = (anchor_box[2] - anchor_box[0]) * (anchor_box[3] - anchor_box[1])
+                    gt_box_area = (gt_boxes[i, j, 2] - gt_boxes[i, j, 0]) * (gt_boxes[i, j, 3] - gt_boxes[i, j, 1])
+                    iou = inter_area / (anchor_box_area + gt_box_area - inter_area)
+                    ious[m] = iou
+                    # 找到 IOU 最大的 n 个 anchor
+                idxs = np.argsort(-ious)[:n]
+                max_ious[i, j, idxs] = ious[idxs]
+                max_idxs[i, j, idxs] = k * 6 * 9 + l * 9 + idxs
+        #根据max_idxs索引找出相应的iou最大的anchor
+        for i in range(max_idxs.shape[0]):
+            for j in range(max_idxs.shape[1]):
+                for k in range(max_idxs.shape[2]):
+                    if max_idxs[i][j][k] >0:
+                        anchor_list[i][j]=anchors[max_idxs[i][j][k]//(6*9),
+                                                  (max_idxs[i][j][k]%(6*9))//9,
+                                                  max_idxs[i][j][k]%9]
+        self.anchor_list = anchor_list
+        self.max_ious = max_ious
+        self.max_idxs = max_idxs
+        return self.anchor_list
 
-        self.anchor_box = np.array(self.anchor_box)
-        return self.anchor_box
+    def generate_mask(self,ignore_threshold):
+        """
+        :param ignore_threshold: ignore_threshold: float，表示IoU小于该阈值的anchor box将被视为负样本
+        :return: ndarray, shape为 (n, num_anchors)
+        """
+        # 将IoU大于阈值的anchor box设为正样本，小于阈值的设为负样本
+        self.mask[self.max_ious >= ignore_threshold] = 1
+        self.mask[self.max_idxs == 1] = 1
+        self.mask[self.max_ious < ignore_threshold] = -1
+        return self.mask
 
     def show_all_anchors(self):
         fig, ax = plt.subplots(1)
@@ -152,14 +174,14 @@ class Anchor:
                     rect = patches.Rectangle((x1, y1), x2 - x1, y2 - y1, linewidth=1, edgecolor=color, facecolor='none')
                     ax.add_patch(rect)
         plt.show()
-    def show_all_choice_anchors(self):
+    def show_all_choice_anchors(self, anchor):
         fig, ax = plt.subplots(1)
         ax.imshow(self.img)
-        for k in range(len(self.anchor_box)):
-            x1 = self.anchor_box[k][0]
-            y1 = self.anchor_box[k][1]
-            x2 = self.anchor_box[k][2]
-            y2 = self.anchor_box[k][3]
+        for k in range(len(anchor)):
+            x1 = anchor[k][0]
+            y1 = anchor[k][1]
+            x2 = anchor[k][2]
+            y2 = anchor[k][3]
             color = 'r' if k < 1 else 'g' if k < 2 else 'b'
             rect = patches.Rectangle((x1, y1), x2 - x1, y2 - y1, linewidth=1, edgecolor=color, facecolor='none')
             ax.add_patch(rect)
@@ -167,20 +189,25 @@ class Anchor:
 
 # 可视化 anchor box
 if __name__ == "__main__":
+    #%%
     #加载数据
     from dataset import Dataset
+    import time
     data = Dataset("/Users/qiuhaoxuan/PycharmProjects/yolov3_spp/yolo-v3-spp/my_yolo_dataset", 64, 20, 224,
                    224)
     data_loader = data.Loader_train()
     for i, (img, labels, gt_boxes) in enumerate(data_loader):
         break
-    image = img[2]
+    #%%
+    k=1
+    image = img[k]
     image = image.permute(1, 2, 0).contiguous().numpy()
     image = cv2.convertScaleAbs(image)
     anchor = Anchor(image, anchor_sizes=[32, 64, 128], anchor_ratios=[0.5, 1, 2], gird_cell_nums=36)
     anchors = anchor.built()
-    gt_boxes = gt_boxes[2].numpy()  #转numpy格式
+    #%%
+    gt_boxes = gt_boxes.numpy()  #转numpy格式
+    a1 = time.time()
     anchor_box = anchor.find_max_iou_anchors(gt_boxes,1)
-    anchor.show_all_choice_anchors()
-
-
+    a2 = time.time() - a1
+    anchor.show_all_choice_anchors(anchor_box[k])

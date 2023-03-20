@@ -97,7 +97,7 @@ class CIoULoss(nn.Module):
         """
 
         :param pred_boxes: pred_boxes的shape应该为(batch_size, 4)，其中4表示预测框的左上角和右下角坐标，例如(x1, y1, x2, y2)
-        :param target_boxes: pred_boxes的shape应该为(batch_size, 4)，其中4表示预测框的左上角和右下角坐标，例如(x1, y1, x2, y2)
+        :param target_boxes: target_boxes的shape应该为(batch_size, 4)，其中4表示真实框的左上角和右下角坐标，例如(x1, y1, x2, y2)
         :return:
         """
         # 计算预测框和目标框的中心点坐标、宽度和高度
@@ -139,3 +139,30 @@ class CIoULoss(nn.Module):
         else:
             return ciou_loss
 
+
+if __name__ == "__main__":
+    from make_anchor import Anchor
+    from dataset import Dataset
+    import cv2, time
+
+    data = Dataset("/Users/qiuhaoxuan/PycharmProjects/yolov3_spp/yolo-v3-spp/my_yolo_dataset", 64, 20, 224,
+                   224)
+    data_loader = data.Loader_train()
+    for i, (img, labels, gt_boxes) in enumerate(data_loader):
+        break
+    #%% anchor和gt_box获取
+    k=32
+    image = img[k]
+    image = image.permute(1, 2, 0).contiguous().numpy()
+    image = cv2.convertScaleAbs(image)
+    anchor = Anchor(image, anchor_sizes=[32, 64, 128], anchor_ratios=[0.5, 1, 2], gird_cell_nums=36)
+    anchors = anchor.built()
+    gt_boxes_ = gt_boxes[k].numpy()  #转numpy格式
+    a1 = time.time()
+    anchor_box = anchor.find_max_iou_anchors(gt_boxes_,1)
+    a2 = time.time() - a1
+    #%% 定位损失函数计算
+    anchor_box = torch.from_numpy(anchor_box)
+    gt_boxes_ = torch.from_numpy(gt_boxes_)
+    ciou_loss = CIoULoss()
+    l = ciou_loss(anchor_box,gt_boxes_)
