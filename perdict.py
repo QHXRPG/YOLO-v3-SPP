@@ -54,4 +54,3 @@ def perdict():
 
         # for i,(img,labels,anchor) in enumerate(data_loader):
 
-        path = make_detect_result()
