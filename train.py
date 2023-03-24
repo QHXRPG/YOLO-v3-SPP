@@ -6,6 +6,7 @@ from Loss import CIoULoss
 from make_anchor import Anchor
 from model import YOLO_3_SPP_Model
 from dataset import Dataset
+from make_anchor import Anchor
 import torch
 
 def anchor_mask(mask, anchor, grid_num):
@@ -53,97 +54,133 @@ def Prediction_head_info(feature_map:torch.Tensor):
 
 
 
-#%% 加载数据
-import time
-data = Dataset("/Users/qiuhaoxuan/PycharmProjects/yolov3_spp/yolo-v3-spp/my_yolo_dataset", 10, 20, 224,
-               224)
-data_loader = data.Loader_train()
-for i, (img, labels, gt_boxes) in enumerate(data_loader):
-    break
+if __name__ == '__main__':
+    data = Dataset("/Users/qiuhaoxuan/PycharmProjects/yolov3_spp/yolo-v3-spp/my_yolo_dataset", 10, 20, 224,
+                   224)
+    data_loader = data.Loader_train()
+    for _, (img, labels, gt_boxes) in enumerate(data_loader):
+        break
+    """
+    Out[4]: torch.Size([10, 6, 7, 7])  大目标
+    Out[5]: torch.Size([10, 6, 14, 14]) 中目标
+    Out[6]: torch.Size([10, 6, 28, 28]) 小目标
+    """
+    model = YOLO_3_SPP_Model(5)
+    model.eval()
+    pre = model(img)
 
-#%% 前向传播,得到三个特征层
-"""
-Out[4]: torch.Size([10, 6, 7, 7])  大目标
-Out[5]: torch.Size([10, 6, 14, 14]) 中目标
-Out[6]: torch.Size([10, 6, 28, 28]) 小目标
-"""
-model = YOLO_3_SPP_Model(6)
-pre = model(img)
-feature_map_1,feature_map_2,feature_map_3 = pre[0],pre[1],pre[2]
-grid_num1,grid_num2,grid_num3 = feature_map_1.shape[-1], feature_map_2.shape[-1], feature_map_3.shape[-1]
-grid_size1,grid_size2,grid_size3 = 224/grid_num1,224/grid_num2,224/grid_num3
-#%% 根据生成的三个特征层生成对应的锚框
-k=3
-image = img[k]
-image = image.permute(1, 2, 0).contiguous().numpy()
-image = cv2.convertScaleAbs(image)
-anchor1,anchor2,anchor3 = Anchor(image, anchor_sizes=[163, 206],
-                                 anchor_ratios=[0.5, 1, 2],
-                                 gird_cell_nums=grid_num1**2),\
-                          Anchor(image, anchor_sizes=[58, 128],
-                                 anchor_ratios=[0.5, 1, 2],
-                                 gird_cell_nums=grid_num2**2),\
-                          Anchor(image, anchor_sizes=[12, 46],
-                                 anchor_ratios=[0.5, 1, 2],
-                                 gird_cell_nums=grid_num3**2)
-anchors1,anchors2,anchors3 = anchor1.built(),anchor2.built(),anchor3.built()
+    feature_map_1, feature_map_2, feature_map_3 = pre[0], pre[1], pre[2]
+    grid_num1, grid_num2, grid_num3 = feature_map_1.shape[-1], feature_map_2.shape[-1], feature_map_3.shape[-1]
+    grid_size1, grid_size2, grid_size3 = 224 / grid_num1, 224 / grid_num2, 224 / grid_num3
+    k = 1
+    image = img[k]
+    image = image.permute(1, 2, 0).contiguous().numpy()
+    image = cv2.convertScaleAbs(image)
+    Anchor1, Anchor2, Anchor3 = Anchor(image, anchor_sizes=[163, 206],
+                                       anchor_ratios=[0.5, 1, 2],
+                                       gird_cell_nums=grid_num1 ** 2), \
+                                Anchor(image, anchor_sizes=[58, 128],
+                                       anchor_ratios=[0.5, 1, 2],
+                                       gird_cell_nums=grid_num2 ** 2), \
+                                Anchor(image, anchor_sizes=[12, 46],
+                                       anchor_ratios=[0.5, 1, 2],
+                                       gird_cell_nums=grid_num3 ** 2)
+    anchors1, anchors2, anchors3 = Anchor1.built(), Anchor2.built(), Anchor3.built()
+    opt = torch.optim.Adam(model.parameters(),lr=0.5,eps=1e-3)
+    model.train()
+    #训练
+    for epoch in range(50):
+        data_loader = data.Loader_train()
+        for j, (img, labels, gt_boxes) in enumerate(data_loader):
+            print(epoch)
+            pre = model(img)
+            feature_map_1, feature_map_2, feature_map_3 = pre[0], pre[1], pre[2]
+            anchor_box1, anchor_box2, anchor_box3 = Anchor1.find_max_iou_anchors(gt_boxes, 1), \
+                                                    Anchor2.find_max_iou_anchors(gt_boxes, 1), \
+                                                    Anchor3.find_max_iou_anchors(gt_boxes, 1)
+            """
+            # torch.Size([10, 7, 7])
+            # torch.Size([10, 14, 14])
+            # torch.Size([10, 28, 28])
+            """
+            mask1, mask2, mask3 = generate_mask(gt_boxes, img, 7), \
+                                  generate_mask(gt_boxes, img, 14), \
+                                  generate_mask(gt_boxes, img, 28)
+            # 定位损失函数计算
+            anchor1, anchor2, anchor3 = anchor_mask(mask1, anchor_box1, grid_num1), \
+                                        anchor_mask(mask2, anchor_box2, grid_num2), \
+                                        anchor_mask(mask3, anchor_box3, grid_num3)
+            gt1, gt2, gt3 = anchor_mask(mask1, gt_boxes, grid_num1), \
+                            anchor_mask(mask2, gt_boxes, grid_num2), \
+                            anchor_mask(mask3, gt_boxes, grid_num3)
+            gt1[:, 2, :, :], gt1[:, 3, :, :] = (gt1[:, 2, :, :] - gt1[:, 0, :, :]), (gt1[:, 3, :, :] - gt1[:, 1, :, :])
+            gt2[:, 2, :, :], gt2[:, 3, :, :] = (gt2[:, 2, :, :] - gt2[:, 0, :, :]), (gt2[:, 3, :, :] - gt2[:, 1, :, :])
+            gt3[:, 2, :, :], gt3[:, 3, :, :] = (gt3[:, 2, :, :] - gt3[:, 0, :, :]), (gt3[:, 3, :, :] - gt3[:, 1, :, :])
+            gt1[:, 0, :, :], gt1[:, 1, :, :] = (gt1[:, 0, :, :] +
+                                                0.5 * gt1[:, 2, :, :]), (gt1[:, 1, :, :] + 0.5 * gt1[:, 3, :, :])
+            gt2[:, 0, :, :], gt2[:, 1, :, :] = (gt2[:, 0, :, :] +
+                                                0.5 * gt2[:, 2, :, :]), (gt2[:, 1, :, :] + 0.5 * gt2[:, 3, :, :])
+            gt3[:, 0, :, :], gt3[:, 1, :, :] = (gt3[:, 0, :, :] +
+                                                0.5 * gt3[:, 2, :, :]), (gt3[:, 1, :, :] + 0.5 * gt3[:, 3, :, :])
 
-#%% 找到每张图片与ground true(batch_size, 10, 4)  iou最大的锚框 输出anchor_box(batch_size, 10, 4)
-# gt_boxes = gt_boxes.numpy()  # 转numpy格式
-anchor_box1,anchor_box2,anchor_box3 = anchor1.find_max_iou_anchors(gt_boxes,1),\
-                                      anchor2.find_max_iou_anchors(gt_boxes,1),\
-                                      anchor3.find_max_iou_anchors(gt_boxes,1)
-anchor3.show_all_choice_anchors(anchor_box2[k])
+            Cx1 = mask1 * torch.arange(grid_num1)
+            Cy1 = mask1 * torch.arange(grid_num1).reshape(grid_num1, 1)
+            gt1[:, 0, :, :] = gt1[:, 0, :, :] / grid_size1 - Cx1
+            gt1[:, 1, :, :] = gt1[:, 1, :, :] / grid_size1 - Cy1
+            gt1[:, 2, :, :] = torch.log(gt1[:, 2, :, :] / (anchor1[:, 2, :, :] - anchor1[:, 0, :, :]))
+            gt1[:, 2, :, :] = torch.where(torch.isnan(gt1[:, 2, :, :]), torch.zeros_like(gt1[:, 2, :, :]),
+                                          gt1[:, 2, :, :])
+            gt1[:, 3, :, :] = torch.log(gt1[:, 3, :, :] / (anchor1[:, 3, :, :] - anchor1[:, 1, :, :]))
+            gt1[:, 3, :, :] = torch.where(torch.isnan(gt1[:, 3, :, :]), torch.zeros_like(gt1[:, 3, :, :]),
+                                          gt1[:, 3, :, :])
+
+            Cx2 = mask2 * torch.arange(grid_num2)
+            Cy2 = mask2 * torch.arange(grid_num2).reshape(grid_num2, 1)
+            gt2[:, 0, :, :] = gt2[:, 0, :, :] / grid_size2 - Cx2
+            gt2[:, 1, :, :] = gt2[:, 1, :, :] / grid_size2 - Cy2
+            gt2[:, 2, :, :] = torch.log(gt2[:, 2, :, :] / (anchor2[:, 2, :, :] - anchor2[:, 0, :, :]))
+            gt2[:, 2, :, :] = torch.where(torch.isnan(gt2[:, 2, :, :]), torch.zeros_like(gt2[:, 2, :, :]),
+                                          gt2[:, 2, :, :])
+            gt2[:, 3, :, :] = torch.log(gt2[:, 3, :, :] / (anchor2[:, 3, :, :] - anchor2[:, 1, :, :]))
+            gt2[:, 3, :, :] = torch.where(torch.isnan(gt2[:, 3, :, :]), torch.zeros_like(gt2[:, 3, :, :]),
+                                          gt2[:, 3, :, :])
+
+            Cx3 = mask3 * torch.arange(grid_num3)
+            Cy3 = mask3 * torch.arange(grid_num3).reshape(grid_num3, 1)
+            gt3[:, 0, :, :] = gt3[:, 0, :, :] / grid_size3 - Cx3
+            gt3[:, 1, :, :] = gt3[:, 1, :, :] / grid_size3 - Cy3
+            gt3[:, 2, :, :] = torch.log(gt3[:, 2, :, :] / (anchor3[:, 2, :, :] - anchor3[:, 0, :, :]))
+            gt3[:, 2, :, :] = torch.where(torch.isnan(gt3[:, 2, :, :]), torch.zeros_like(gt3[:, 2, :, :]),
+                                          gt3[:, 2, :, :])
+            gt3[:, 3, :, :] = torch.log(gt3[:, 3, :, :] / (anchor3[:, 3, :, :] - anchor3[:, 1, :, :]))
+            gt3[:, 3, :, :] = torch.where(torch.isnan(gt3[:, 3, :, :]), torch.zeros_like(gt3[:, 3, :, :]),
+                                          gt3[:, 3, :, :])
 
 
-#%% 生成对应的置信度mask
-"""
-# torch.Size([10, 7, 7])
-# torch.Size([10, 14, 14])
-# torch.Size([10, 28, 28])
-"""
-mask1, mask2, mask3 = generate_mask(gt_boxes, img, 7),\
-                      generate_mask(gt_boxes, img, 14),\
-                      generate_mask(gt_boxes, img, 28)
+            ciouloss = nn.MSELoss(reduction='mean')
+            l_iou1, l_iou2, l_iou3 = ciouloss(feature_map_1[:, :4, :, :], gt1), \
+                                     2*ciouloss(feature_map_2[:, :4, :, :], gt2), \
+                                     3*ciouloss(feature_map_3[:, :4, :, :], gt3)
 
-#%% 定位损失函数计算
+            # 置信度损失计算
+            bceloss = nn.CrossEntropyLoss(reduction='sum')
+            l_bce1, l_bce2, l_bce3 = bceloss(feature_map_1[:, 4, :, :], mask1), \
+                                     2*bceloss(feature_map_2[:, 4, :, :], mask2), \
+                                     3*bceloss(feature_map_3[:, 4, :, :], mask3)
 
-anchor1,anchor2,anchor3 = anchor_mask(mask1, anchor_box1, grid_num1),\
-                          anchor_mask(mask2, anchor_box2, grid_num2),\
-                          anchor_mask(mask3, anchor_box3, grid_num3)
-gt1,gt2,gt3 = anchor_mask(mask1, gt_boxes, grid_num1),\
-              anchor_mask(mask2, gt_boxes, grid_num2),\
-              anchor_mask(mask3, gt_boxes, grid_num3)
-gt1[:,2,:,:],gt1[:,3,:,:] = (gt1[:,2,:,:] - gt1[:,0,:,:]),(gt1[:,3,:,:] - gt1[:,1,:,:])
-gt2[:,2,:,:],gt2[:,3,:,:] = (gt2[:,2,:,:] - gt2[:,0,:,:]),(gt2[:,3,:,:] - gt2[:,1,:,:])
-gt3[:,2,:,:],gt3[:,3,:,:] = (gt3[:,2,:,:] - gt3[:,0,:,:]),(gt3[:,3,:,:] - gt3[:,1,:,:])
+            # 计算类别损失,由于只有"枪支"一个类别，所以这里的target为全一,即mask
+            # class_loss = nn.BCELoss(reduction='mean')
+            # l_class1, l_class2, l_class3 = bceloss(feature_map_1[:, 5, :, :], mask1), \
+            #                                2*bceloss(feature_map_2[:, 5, :, :], mask2), \
+            #                                3*bceloss(feature_map_3[:, 5, :, :], mask3)
 
-e = np.e
-Cx1 = mask1*torch.arange(grid_num1)
-Cy1 = mask1*torch.arange(grid_num1).reshape(grid_num1,1)
-feature_map_1[:,0,:,:] = grid_size1 * torch.sigmoid(feature_map_1[:,0,:,:]) + grid_size1 * Cx1
-feature_map_1[:,1,:,:] = grid_size1 * torch.sigmoid(feature_map_1[:,1,:,:]) + grid_size1 * Cy1
-feature_map_1[:,2,:,:] = (anchor1[:,2,:,:] - anchor1[:,0,:,:]) * e**(feature_map_1[:,2,:,:])
-feature_map_1[:,3,:,:] = (anchor1[:,3,:,:] - anchor1[:,1,:,:]) * e**(feature_map_1[:,3,:,:])
-
-Cx2 = mask2*torch.arange(grid_num2)
-Cy2 = mask2*torch.arange(grid_num2).reshape(grid_num2,1)
-x2 = grid_size2 * torch.sigmoid(feature_map_2[:,0,:,:]) + grid_size2 * Cx2
-y2 = grid_size2 * torch.sigmoid(feature_map_2[:,1,:,:]) + grid_size2 * Cy2
-feature_map_2[:,2,:,:] = (anchor2[:,2,:,:] - anchor2[:,0,:,:]) * e**(feature_map_2[:,2,:,:])
-feature_map_2[:,3,:,:] = (anchor2[:,3,:,:] - anchor2[:,1,:,:]) * e**(feature_map_2[:,3,:,:])
-
-Cx3 = mask3*torch.arange(grid_num3)
-Cy3 = mask3*torch.arange(grid_num3).reshape(grid_num3,1)
-x3 = grid_size3 * torch.sigmoid(feature_map_3[:,0,:,:]) + grid_size3 * Cx3
-y3 = grid_size3 * torch.sigmoid(feature_map_3[:,1,:,:]) + grid_size3 * Cy3
-feature_map_3[:,2,:,:] = (anchor3[:,2,:,:] - anchor3[:,0,:,:]) * e**(feature_map_3[:,2,:,:])
-feature_map_3[:,3,:,:] = (anchor3[:,3,:,:] - anchor3[:,1,:,:]) * e**(feature_map_3[:,3,:,:])
-
-ciouloss = CIoULoss(reduction='sum')
-l_iou1,l_iou2,l_iou3 = ciouloss(feature_map_1[:,:4,:,:],gt1),\
-                       ciouloss(feature_map_2[:,:4,:,:],gt2),\
-                       ciouloss(feature_map_3[:,:4,:,:],gt3)
-
+            # 计算总损失
+            l1 = 2.3 * l_iou1 + 0.7 * l_bce1
+            l2 = 3.1 * l_iou2 + 0.7 * l_bce2
+            l3 = 4.8 * l_iou3 + 0.7 * l_bce3
+            Loss_all = l1 + l2 + l3
+            opt.zero_grad()
+            Loss_all.backward()
+            opt.step()
 
 
