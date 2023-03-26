@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import cv2
-from Loss import CIoULoss
+from Loss import CIoULoss,FocalLoss
 from make_anchor import Anchor
 from model import YOLO_3_SPP_Model
 from dataset import Dataset
@@ -86,10 +86,10 @@ if __name__ == '__main__':
                                        anchor_ratios=[0.5, 1, 2],
                                        gird_cell_nums=grid_num3 ** 2)
     anchors1, anchors2, anchors3 = Anchor1.built(), Anchor2.built(), Anchor3.built()
-    opt = torch.optim.Adam(model.parameters(),lr=0.5,eps=1e-3)
+    opt = torch.optim.Adam(model.parameters(),lr=0.0005,eps=1e-3)
     model.train()
     #训练
-    for epoch in range(50):
+    for epoch in range(5):
         data_loader = data.Loader_train()
         for j, (img, labels, gt_boxes) in enumerate(data_loader):
             print(epoch)
@@ -98,11 +98,7 @@ if __name__ == '__main__':
             anchor_box1, anchor_box2, anchor_box3 = Anchor1.find_max_iou_anchors(gt_boxes, 1), \
                                                     Anchor2.find_max_iou_anchors(gt_boxes, 1), \
                                                     Anchor3.find_max_iou_anchors(gt_boxes, 1)
-            """
-            # torch.Size([10, 7, 7])
-            # torch.Size([10, 14, 14])
-            # torch.Size([10, 28, 28])
-            """
+            
             mask1, mask2, mask3 = generate_mask(gt_boxes, img, 7), \
                                   generate_mask(gt_boxes, img, 14), \
                                   generate_mask(gt_boxes, img, 28)
@@ -156,28 +152,29 @@ if __name__ == '__main__':
             gt3[:, 3, :, :] = torch.where(torch.isnan(gt3[:, 3, :, :]), torch.zeros_like(gt3[:, 3, :, :]),
                                           gt3[:, 3, :, :])
 
-
-            ciouloss = nn.MSELoss(reduction='mean')
+            ciouloss = nn.MSELoss()
             l_iou1, l_iou2, l_iou3 = ciouloss(feature_map_1[:, :4, :, :], gt1), \
-                                     2*ciouloss(feature_map_2[:, :4, :, :], gt2), \
-                                     3*ciouloss(feature_map_3[:, :4, :, :], gt3)
+                                     ciouloss(feature_map_2[:, :4, :, :], gt2), \
+                                     ciouloss(feature_map_3[:, :4, :, :], gt3)
 
             # 置信度损失计算
-            bceloss = nn.CrossEntropyLoss(reduction='sum')
-            l_bce1, l_bce2, l_bce3 = bceloss(feature_map_1[:, 4, :, :], mask1), \
-                                     2*bceloss(feature_map_2[:, 4, :, :], mask2), \
-                                     3*bceloss(feature_map_3[:, 4, :, :], mask3)
-
-            # 计算类别损失,由于只有"枪支"一个类别，所以这里的target为全一,即mask
-            # class_loss = nn.BCELoss(reduction='mean')
-            # l_class1, l_class2, l_class3 = bceloss(feature_map_1[:, 5, :, :], mask1), \
-            #                                2*bceloss(feature_map_2[:, 5, :, :], mask2), \
-            #                                3*bceloss(feature_map_3[:, 5, :, :], mask3)
+            mask1,mask2,mask3 = mask1*2,mask2*4,mask3*8
+            l_bce1, l_bce2, l_bce3 = ciouloss(feature_map_1[:, 4, :, :], mask1), \
+                                     ciouloss(feature_map_2[:, 4, :, :], mask2), \
+                                     ciouloss(feature_map_3[:, 4, :, :], mask3)
 
             # 计算总损失
-            l1 = 2.3 * l_iou1 + 0.7 * l_bce1
-            l2 = 3.1 * l_iou2 + 0.7 * l_bce2
-            l3 = 4.8 * l_iou3 + 0.7 * l_bce3
+            l1 = 1.9 * l_iou1 + 1.7 * l_bce1
+            l2 = 2.4 * l_iou2 + 1.7 * l_bce2
+            l3 = 3.3 * l_iou3 + 1.7 * l_bce3
+
+            print('l_iou1:',l_iou1)
+            print('l_iou2:', l_iou2)
+            print('l_iou3:', l_iou3)
+            print('l_bce1:', l_bce1)
+            print('l_bce2:', l_bce2)
+            print('l_bce3:', l_bce3)
+
             Loss_all = l1 + l2 + l3
             opt.zero_grad()
             Loss_all.backward()
